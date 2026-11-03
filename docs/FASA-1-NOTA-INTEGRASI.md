@@ -10,7 +10,7 @@ diperiksa semasa menggabungkannya ke dalam app sebenar.
 ## Status ujian
 
 ```
-vendor/bin/pest          16 passed (104 assertions)
+vendor/bin/pest          29 passed (148 assertions)  — termasuk ramai pelanggan, lihat RAMAI-PELANGGAN.md
 vendor/bin/pint --test   passed
 ```
 

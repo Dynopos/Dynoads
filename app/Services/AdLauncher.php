@@ -6,6 +6,7 @@ use App\Models\AdSet;
 use App\Models\AdVariant;
 use App\Models\AutoAction;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -30,6 +31,13 @@ class AdLauncher
      */
     public function launch(AdSet $adSet): array
     {
+        // Ditolak sebelum satu pun panggilan ke Meta. Duit pelanggan, kad
+        // pelanggan — tanpa persetujuan mereka, tiada apa-apa dibuat.
+        if ($blocker = $adSet->client?->launchBlocker()) {
+            throw new RuntimeException($blocker);
+        }
+
+        $meta = $this->meta->forClient($adSet->client);
         $summary = ['launched' => 0, 'failed' => 0, 'fallbacks' => 0];
         $date = now()->format('dMy');
 
@@ -37,7 +45,7 @@ class AdLauncher
             $name = $this->nameFor($adSet, $index + 1, $date);
 
             try {
-                $this->launchVariant($adSet, $variant, $name, $summary);
+                $this->launchVariant($meta, $adSet, $variant, $name, $summary);
                 $summary['launched']++;
             } catch (Throwable $e) {
                 // Satu variant gagal tidak sepatutnya menjatuhkan yang lain.
@@ -64,16 +72,16 @@ class AdLauncher
         return $summary;
     }
 
-    private function launchVariant(AdSet $adSet, AdVariant $variant, string $name, array &$summary): void
+    private function launchVariant(MetaAdsService $meta, AdSet $adSet, AdVariant $variant, string $name, array &$summary): void
     {
-        $campaignId = $this->meta->createCampaign($name, $adSet->daily_budget_sen);
-        $adsetId = $this->meta->createAdSet($campaignId, $name, $adSet->geo_json ?? []);
+        $campaignId = $meta->createCampaign($name, $adSet->daily_budget_sen);
+        $adsetId = $meta->createAdSet($campaignId, $name, $adSet->geo_json ?? []);
 
         if ($variant->isFromExistingPost()) {
-            $result = $this->meta->createAdFromPost(
+            $result = $meta->createAdFromPost(
                 adsetId: $adsetId,
                 name: $name,
-                pageId: config('dynoads.page_id'),
+                pageId: $meta->target()->pageId,
                 postId: $variant->source_post_id,
                 postData: [
                     'message' => $variant->caption,
@@ -88,7 +96,7 @@ class AdLauncher
                 $summary['fallbacks']++;
             }
         } else {
-            $adId = $this->meta->createAd(
+            $adId = $meta->createAd(
                 adsetId: $adsetId,
                 name: $name,
                 imageHash: $variant->image_hash,
@@ -97,7 +105,7 @@ class AdLauncher
             );
         }
 
-        DB::transaction(function () use ($variant, $adSet, $campaignId, $adsetId, $adId) {
+        DB::transaction(function () use ($meta, $variant, $adSet, $campaignId, $adsetId, $adId) {
             $variant->update([
                 'meta_campaign_id' => $campaignId,
                 'meta_adset_id' => $adsetId,
@@ -111,6 +119,8 @@ class AdLauncher
                 'payload_json' => [
                     'variant_id' => $variant->id,
                     'source_type' => $variant->source_type,
+                    'client_id' => $adSet->client_id,
+                    'ad_account_id' => $meta->target()->adAccountId,
                     'campaign_id' => $campaignId,
                     'ad_id' => $adId,
                 ],

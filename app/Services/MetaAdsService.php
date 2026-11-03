@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AutoAction;
+use App\Models\Client;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -18,6 +19,78 @@ use RuntimeException;
  */
 class MetaAdsService
 {
+    private ?MetaTarget $target = null;
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Ramai pelanggan — pilih aset mana yang disasarkan
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Salinan service yang menyasarkan aset seorang pelanggan. null = akaun
+     * DynoPOS sendiri. Instance asal tidak berubah, jadi singleton dalam
+     * container tak boleh "terlekat" pada pelanggan terakhir.
+     */
+    public function forClient(?Client $client): static
+    {
+        return $this->forTarget(MetaTarget::forClient($client));
+    }
+
+    public function forTarget(MetaTarget $target): static
+    {
+        $copy = clone $this;
+        $copy->target = $target;
+
+        return $copy;
+    }
+
+    public function target(): MetaTarget
+    {
+        return $this->target ?? MetaTarget::owner();
+    }
+
+    /**
+     * Sahkan System User memang nampak Page dan ad account pelanggan.
+     *
+     * GET sahaja. Kalau pelanggan belum beri Partner Access, atau kita belum
+     * Assign Assets kepada System User, ia gagal di sini — bukan di tengah
+     * pelancaran iklan.
+     *
+     * @return array{page_name: string, ad_account_name: string, account_status: int}
+     */
+    public function checkAccess(): array
+    {
+        $target = $this->target();
+
+        if (blank($target->pageId)) {
+            throw new RuntimeException('Page ID tidak ditetapkan.');
+        }
+
+        try {
+            $page = $this->get($target->pageId, ['fields' => 'id,name']);
+        } catch (MetaApiException $e) {
+            throw new RuntimeException(
+                "Tak boleh baca Page {$target->pageId}. Pastikan pelanggan dah beri Partner Access ".
+                "dan Page dah di-assign kepada System User. (Meta: {$e->getMessage()})"
+            );
+        }
+
+        try {
+            $account = $this->get($this->account(), ['fields' => 'id,name,account_status']);
+        } catch (MetaApiException $e) {
+            throw new RuntimeException(
+                "Tak boleh baca akaun iklan {$this->account()}. Pastikan pelanggan dah beri Partner Access ".
+                "dan akaun iklan dah di-assign kepada System User. (Meta: {$e->getMessage()})"
+            );
+        }
+
+        return [
+            'page_name' => (string) $page->json('name'),
+            'ad_account_name' => (string) $account->json('name'),
+            // 1 = ACTIVE. Selain itu (2 disabled, 3 unsettled, …) iklan takkan jalan.
+            'account_status' => (int) $account->json('account_status'),
+        ];
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // FASA 1 — creative daripada posting Page sedia ada
     // ─────────────────────────────────────────────────────────────────────
@@ -244,8 +317,8 @@ class MetaAdsService
             'destination_type' => config('dynoads.adset.destination_type'),
             'billing_event' => config('dynoads.adset.billing_event'),
             'promoted_object' => [
-                'page_id' => config('dynoads.page_id'),
-                'whatsapp_phone_number' => config('dynoads.wa_phone'),
+                'page_id' => $this->target()->pageId,
+                'whatsapp_phone_number' => $this->target()->waPhone,
             ],
             'targeting' => $targeting,
             'status' => config('dynoads.adset.status'),
@@ -276,7 +349,7 @@ class MetaAdsService
             'status' => 'PAUSED',
             'creative' => [
                 'object_story_spec' => [
-                    'page_id' => config('dynoads.page_id'),
+                    'page_id' => $this->target()->pageId,
                     'link_data' => $linkData,
                 ],
             ],
@@ -335,7 +408,7 @@ class MetaAdsService
 
     private function account(): string
     {
-        $id = config('dynoads.ad_account_id');
+        $id = $this->target()->adAccountId;
 
         if (blank($id)) {
             throw new RuntimeException('META_AD_ACCOUNT_ID tidak ditetapkan.');

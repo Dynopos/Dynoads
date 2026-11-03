@@ -8,17 +8,37 @@
         Kita bandingkan mana yang paling murah kosnya.
     </p>
 
+    {{-- Iklan untuk siapa. Setiap pelanggan = Page, akaun iklan dan kad bank sendiri. --}}
+    @if ($this->clients->isNotEmpty())
+        <label class="mt-4 block text-sm font-semibold text-slate-900 dark:text-white">Iklan untuk</label>
+        <select wire:model.live="clientId" class="mt-2 w-full rounded-xl border-slate-200 py-3 dark:border-slate-700 dark:bg-slate-900">
+            <option value="">DynoPOS (akaun sendiri)</option>
+            @foreach ($this->clients as $c)
+                <option value="{{ $c->id }}">{{ $c->name }}</option>
+            @endforeach
+        </select>
+        @if ($blocker = $this->client?->launchBlocker())
+            <p class="mt-2 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                {{ $blocker }}
+            </p>
+        @elseif ($this->client)
+            <p class="mt-2 text-xs text-slate-400">
+                Bajet dicaj ke akaun iklan {{ $this->client->ad_account_id }} milik {{ $this->client->name }}.
+            </p>
+        @endif
+    @endif
+
     {{-- Amaran wajib. Posting yang naik secara organik diedar kepada peminat
          sedia ada; iklan diedar kepada orang asing. Dua benda berbeza. --}}
     <p class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
         Posting yang naik secara organik belum tentu murah kosnya sebagai iklan — sebab tu kita tetap split test.
     </p>
 
-    @if ($error)
+    @foreach (array_filter([$error, $postsError]) as $alert)
         <div class="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
-            {{ $error }}
+            {{ $alert }}
         </div>
-    @endif
+    @endforeach
 
     @if ($result)
         <div class="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
@@ -73,7 +93,7 @@
                 </div>
             </button>
         @empty
-            @unless ($error)
+            @unless ($postsError)
                 <p class="col-span-2 py-10 text-center text-sm text-slate-400">
                     Tiada posting bergambar dijumpai di Page ini.
                 </p>
@@ -126,7 +146,7 @@
             type="button"
             wire:click="launch"
             wire:loading.attr="disabled"
-            @disabled($launching || count($selected) < $this->minSelection())
+            @disabled($launching || count($selected) < $this->minSelection() || $this->client?->launchBlocker())
             class="mx-auto block w-full max-w-md rounded-2xl bg-indigo-600 py-4 text-base font-bold text-white disabled:opacity-40"
         >
             <span wire:loading.remove wire:target="launch">Buat iklan (PAUSED)</span>
